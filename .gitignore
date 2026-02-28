@@ -1,0 +1,15 @@
+# Generated and machine-local files
+.DS_Store
+__MACOSX/
+._*
+.vs/
+*.vcxproj.user
+Debug/
+Release/
+x64/
+*.obj
+*.pdb
+*.ilk
+*.exe
+# Large course scene assets are prepared separately.
+hw3/Scene/

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <GL/glew.h>
 #include <GL/freeglut.h>
 
@@ -7,8 +8,6 @@
 GLuint h_ShaderProgram; // handle to shader program
 GLint loc_ModelViewProjectionMatrix, loc_primitive_color; // indices of uniform variables
 
-														  // include glm/*.hpp only if necessary
-														  //#include <glm/glm.hpp> 
 #include <glm/gtc/matrix_transform.hpp> //translate, rotate, scale, ortho, etc.
 glm::mat4 ModelViewProjectionMatrix;
 glm::mat4 ViewMatrix, ProjectionMatrix, ViewProjectionMatrix;
@@ -20,8 +19,28 @@ glm::mat4 ViewMatrix, ProjectionMatrix, ViewProjectionMatrix;
 #define LOC_VERTEX 0
 
 int win_width = 0, win_height = 0;
-float centerx = 0.0f, centery = 0.0f, rotate_angle = 0.0f;
 
+// HW2: 애니메이션 타이머
+// timestamp  : 항상 증가 (L2/L3 orbit 공용)
+// clock_L1   : '1'키로 on/off  (요구 3 - Level 1)
+// clock_L4   : '4'키로 on/off  (요구 4 - Level 4, 추가된 레벨)
+// clock_L5   : '5'키로 on/off  (Level 5, 추가 구현)
+int  timestamp = 0;
+int  clock_L1 = 0;
+int  clock_L4 = 0;
+int  clock_L5 = 0;
+int  anim_L1_on = 1;
+int  anim_L4_on = 1;
+int  anim_L5_on = 1;
+
+// HW2: 마우스 드래그로 Level0 위치 이동
+float L0_x = 0.0f, L0_y = 0.0f;
+int   is_dragging = 0;
+
+
+// ================================================================
+//  axes
+// ================================================================
 GLfloat axes[4][2];
 GLfloat axes_color[3] = { 0.0f, 0.0f, 0.0f };
 GLuint VBO_axes, VAO_axes;
@@ -32,19 +51,14 @@ void prepare_axes(void) { // Draw axes in their MC.
 	axes[2][0] = 0.0f; axes[2][1] = -win_height / 2.5f;
 	axes[3][0] = 0.0f; axes[3][1] = win_height / 2.5f;
 
-	// Initialize vertex buffer object.
 	glGenBuffers(1, &VBO_axes);
-
 	glBindBuffer(GL_ARRAY_BUFFER, VBO_axes);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(axes), axes, GL_STATIC_DRAW);
 
-	// Initialize vertex array object.
 	glGenVertexArrays(1, &VAO_axes);
 	glBindVertexArray(VAO_axes);
-
 	glBindBuffer(GL_ARRAY_BUFFER, VBO_axes);
 	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
 	glEnableVertexAttribArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
@@ -67,53 +81,10 @@ void draw_axes(void) {
 	glBindVertexArray(0);
 }
 
-GLfloat line[2][2];
-GLfloat line_color[3] = { 1.0f, 0.0f, 0.0f };
-GLuint VBO_line, VAO_line;
 
-void prepare_line(void) { 	// y = x - win_height/4
-	line[0][0] = (1.0f / 4.0f - 1.0f / 2.5f)*win_height;
-	line[0][1] = (1.0f / 4.0f - 1.0f / 2.5f)*win_height - win_height / 4.0f;
-	line[1][0] = win_width / 2.5f;
-	line[1][1] = win_width / 2.5f - win_height / 4.0f;
-
-	// Initialize vertex buffer object.
-	glGenBuffers(1, &VBO_line);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_line);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(line), line, GL_STATIC_DRAW);
-
-	// Initialize vertex array object.
-	glGenVertexArrays(1, &VAO_line);
-	glBindVertexArray(VAO_line);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_line);
-	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
-	glEnableVertexAttribArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindVertexArray(0);
-}
-
-void update_line(void) { 	// y = x - win_height/4
-	line[0][0] = (1.0f / 4.0f - 1.0f / 2.5f)*win_height;
-	line[0][1] = (1.0f / 4.0f - 1.0f / 2.5f)*win_height - win_height / 4.0f;
-	line[1][0] = win_width / 2.5f;
-	line[1][1] = win_width / 2.5f - win_height / 4.0f;
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_line);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(line), line, GL_STATIC_DRAW);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-}
-
-void draw_line(void) { // Draw line in its MC.
-					   // y = x - win_height/4
-	glUniform3fv(loc_primitive_color, 1, line_color);
-	glBindVertexArray(VAO_line);
-	glDrawArrays(GL_LINES, 0, 2);
-	glBindVertexArray(0);
-}
-
+// ================================================================
+//  airplane  (Level 0)
+// ================================================================
 #define AIRPLANE_BIG_WING 0
 #define AIRPLANE_SMALL_WING 1
 #define AIRPLANE_BODY 2
@@ -129,29 +100,23 @@ GLfloat sidewinder1[5][2] = { { -20.0, 10.0 },{ -18.0, 3.0 },{ -16.0, 10.0 },{ -
 GLfloat sidewinder2[5][2] = { { 20.0, 10.0 },{ 18.0, 3.0 },{ 16.0, 10.0 },{ 18.0, 20.0 },{ 20.0, 20.0 } };
 GLfloat center[1][2] = { { 0.0, 0.0 } };
 GLfloat airplane_color[7][3] = {
-	{ 150 / 255.0f, 129 / 255.0f, 183 / 255.0f },  // big_wing
-	{ 245 / 255.0f, 211 / 255.0f,   0 / 255.0f },  // small_wing
-	{ 111 / 255.0f,  85 / 255.0f, 157 / 255.0f },  // body
-	{ 150 / 255.0f, 129 / 255.0f, 183 / 255.0f },  // back
-	{ 245 / 255.0f, 211 / 255.0f,   0 / 255.0f },  // sidewinder1
-	{ 245 / 255.0f, 211 / 255.0f,   0 / 255.0f },  // sidewinder2
-	{ 255 / 255.0f,   0 / 255.0f,   0 / 255.0f }   // center
+	{ 150 / 255.0f, 129 / 255.0f, 183 / 255.0f },
+	{ 245 / 255.0f, 211 / 255.0f,   0 / 255.0f },
+	{ 111 / 255.0f,  85 / 255.0f, 157 / 255.0f },
+	{ 150 / 255.0f, 129 / 255.0f, 183 / 255.0f },
+	{ 245 / 255.0f, 211 / 255.0f,   0 / 255.0f },
+	{ 245 / 255.0f, 211 / 255.0f,   0 / 255.0f },
+	{ 255 / 255.0f,   0 / 255.0f,   0 / 255.0f }
 };
-
 GLuint VBO_airplane, VAO_airplane;
-
-int airplane_clock = 0;
-float airplane_s_factor = 1.0f;
 
 void prepare_airplane() {
 	GLsizeiptr buffer_size = sizeof(big_wing) + sizeof(small_wing) + sizeof(body) + sizeof(back)
 		+ sizeof(sidewinder1) + sizeof(sidewinder2) + sizeof(center);
 
-	// Initialize vertex buffer object.
 	glGenBuffers(1, &VBO_airplane);
-
 	glBindBuffer(GL_ARRAY_BUFFER, VBO_airplane);
-	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW); // allocate buffer object memory
+	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW);
 
 	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(big_wing), big_wing);
 	glBufferSubData(GL_ARRAY_BUFFER, sizeof(big_wing), sizeof(small_wing), small_wing);
@@ -164,39 +129,29 @@ void prepare_airplane() {
 	glBufferSubData(GL_ARRAY_BUFFER, sizeof(big_wing) + sizeof(small_wing) + sizeof(body) + sizeof(back)
 		+ sizeof(sidewinder1) + sizeof(sidewinder2), sizeof(center), center);
 
-	// Initialize vertex array object.
 	glGenVertexArrays(1, &VAO_airplane);
 	glBindVertexArray(VAO_airplane);
-
 	glBindBuffer(GL_ARRAY_BUFFER, VBO_airplane);
 	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
 	glEnableVertexAttribArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
 }
 
-void draw_airplane() { // Draw airplane in its MC.
+void draw_airplane() {
 	glBindVertexArray(VAO_airplane);
-
 	glUniform3fv(loc_primitive_color, 1, airplane_color[AIRPLANE_BIG_WING]);
 	glDrawArrays(GL_TRIANGLE_FAN, 0, 6);
-
 	glUniform3fv(loc_primitive_color, 1, airplane_color[AIRPLANE_SMALL_WING]);
 	glDrawArrays(GL_TRIANGLE_FAN, 6, 6);
-
 	glUniform3fv(loc_primitive_color, 1, airplane_color[AIRPLANE_BODY]);
 	glDrawArrays(GL_TRIANGLE_FAN, 12, 5);
-
 	glUniform3fv(loc_primitive_color, 1, airplane_color[AIRPLANE_BACK]);
 	glDrawArrays(GL_TRIANGLE_FAN, 17, 5);
-
 	glUniform3fv(loc_primitive_color, 1, airplane_color[AIRPLANE_SIDEWINDER1]);
 	glDrawArrays(GL_TRIANGLE_FAN, 22, 5);
-
 	glUniform3fv(loc_primitive_color, 1, airplane_color[AIRPLANE_SIDEWINDER2]);
 	glDrawArrays(GL_TRIANGLE_FAN, 27, 5);
-
 	glUniform3fv(loc_primitive_color, 1, airplane_color[AIRPLANE_CENTER]);
 	glPointSize(5.0);
 	glDrawArrays(GL_POINTS, 32, 1);
@@ -204,269 +159,67 @@ void draw_airplane() { // Draw airplane in its MC.
 	glBindVertexArray(0);
 }
 
-//shirt
-#define SHIRT_LEFT_BODY 0
-#define SHIRT_RIGHT_BODY 1
-#define SHIRT_LEFT_COLLAR 2
-#define SHIRT_RIGHT_COLLAR 3
-#define SHIRT_FRONT_POCKET 4
-#define SHIRT_BUTTON1 5
-#define SHIRT_BUTTON2 6
-#define SHIRT_BUTTON3 7
-#define SHIRT_BUTTON4 8
-GLfloat left_body[6][2] = { { 0.0, -9.0 },{ -8.0, -9.0 },{ -11.0, 8.0 },{ -6.0, 10.0 },{ -3.0, 7.0 },{ 0.0, 9.0 } };
-GLfloat right_body[6][2] = { { 0.0, -9.0 },{ 0.0, 9.0 },{ 3.0, 7.0 },{ 6.0, 10.0 },{ 11.0, 8.0 },{ 8.0, -9.0 } };
-GLfloat left_collar[4][2] = { { 0.0, 9.0 },{ -3.0, 7.0 },{ -6.0, 10.0 },{ -4.0, 11.0 } };
-GLfloat right_collar[4][2] = { { 0.0, 9.0 },{ 4.0, 11.0 },{ 6.0, 10.0 },{ 3.0, 7.0 } };
-GLfloat front_pocket[6][2] = { { 5.0, 0.0 },{ 4.0, 1.0 },{ 4.0, 3.0 },{ 7.0, 3.0 },{ 7.0, 1.0 },{ 6.0, 0.0 } };
-GLfloat button1[3][2] = { { -1.0, 6.0 },{ 1.0, 6.0 },{ 0.0, 5.0 } };
-GLfloat button2[3][2] = { { -1.0, 3.0 },{ 1.0, 3.0 },{ 0.0, 2.0 } };
-GLfloat button3[3][2] = { { -1.0, 0.0 },{ 1.0, 0.0 },{ 0.0, -1.0 } };
-GLfloat button4[3][2] = { { -1.0, -3.0 },{ 1.0, -3.0 },{ 0.0, -4.0 } };
 
-GLfloat shirt_color[9][3] = {
-	{ 255 / 255.0f, 255 / 255.0f, 255 / 255.0f },
-	{ 255 / 255.0f, 255 / 255.0f, 255 / 255.0f },
-	{ 206 / 255.0f, 173 / 255.0f, 184 / 255.0f },
-	{ 206 / 255.0f, 173 / 255.0f, 184 / 255.0f },
-	{ 206 / 255.0f, 173 / 255.0f, 184 / 255.0f },
-	{ 206 / 255.0f, 173 / 255.0f, 184 / 255.0f },
-	{ 206 / 255.0f, 173 / 255.0f, 184 / 255.0f },
-	{ 206 / 255.0f, 173 / 255.0f, 184 / 255.0f },
-	{ 206 / 255.0f, 173 / 255.0f, 184 / 255.0f }
+// ================================================================
+//  hat  (Level 1)
+// ================================================================
+#define HAT_LEAF 0
+#define HAT_BODY 1
+#define HAT_STRIP 2
+#define HAT_BOTTOM 3
+
+GLfloat hat_leaf[4][2] = { { 3.0, 20.0 },{ 3.0, 28.0 },{ 9.0, 32.0 },{ 9.0, 24.0 } };
+GLfloat hat_body[4][2] = { { -19.5, 2.0 },{ 19.5, 2.0 },{ 15.0, 20.0 },{ -15.0, 20.0 } };
+GLfloat hat_strip[4][2] = { { -20.0, 0.0 },{ 20.0, 0.0 },{ 19.5, 2.0 },{ -19.5, 2.0 } };
+GLfloat hat_bottom[4][2] = { { 25.0, 0.0 },{ -25.0, 0.0 },{ -25.0, -4.0 },{ 25.0, -4.0 } };
+
+GLfloat hat_color[4][3] = {
+	{ 167 / 255.0f, 255 / 255.0f,  55 / 255.0f },
+	{ 255 / 255.0f, 144 / 255.0f,  32 / 255.0f },
+	{ 255 / 255.0f,  40 / 255.0f,  33 / 255.0f },
+	{ 255 / 255.0f, 144 / 255.0f,  32 / 255.0f }
 };
 
-GLuint VBO_shirt, VAO_shirt;
-void prepare_shirt() {
-	GLsizeiptr buffer_size = sizeof(left_body) + sizeof(right_body) + sizeof(left_collar) + sizeof(right_collar)
-		+ sizeof(front_pocket) + sizeof(button1) + sizeof(button2) + sizeof(button3) + sizeof(button4);
+GLuint VBO_hat, VAO_hat;
 
-	// Initialize vertex buffer object.
-	glGenBuffers(1, &VBO_shirt);
+void prepare_hat() {
+	GLsizeiptr buffer_size = sizeof(hat_leaf) + sizeof(hat_body) + sizeof(hat_strip) + sizeof(hat_bottom);
 
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_shirt);
-	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW); // allocate buffer object memory
+	glGenBuffers(1, &VBO_hat);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO_hat);
+	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW);
 
-	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(left_body), left_body);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(left_body), sizeof(right_body), right_body);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(left_body) + sizeof(right_body), sizeof(left_collar), left_collar);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(left_body) + sizeof(right_body) + sizeof(left_collar), sizeof(right_collar), right_collar);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(left_body) + sizeof(right_body) + sizeof(left_collar) + sizeof(right_collar),
-		sizeof(front_pocket), front_pocket);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(left_body) + sizeof(right_body) + sizeof(left_collar) + sizeof(right_collar)
-		+ sizeof(front_pocket), sizeof(button1), button1);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(left_body) + sizeof(right_body) + sizeof(left_collar) + sizeof(right_collar)
-		+ sizeof(front_pocket) + sizeof(button1), sizeof(button2), button2);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(left_body) + sizeof(right_body) + sizeof(left_collar) + sizeof(right_collar)
-		+ sizeof(front_pocket) + sizeof(button1) + sizeof(button2), sizeof(button3), button3);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(left_body) + sizeof(right_body) + sizeof(left_collar) + sizeof(right_collar)
-		+ sizeof(front_pocket) + sizeof(button1) + sizeof(button2) + sizeof(button3), sizeof(button4), button4);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(hat_leaf), hat_leaf);
+	glBufferSubData(GL_ARRAY_BUFFER, sizeof(hat_leaf), sizeof(hat_body), hat_body);
+	glBufferSubData(GL_ARRAY_BUFFER, sizeof(hat_leaf) + sizeof(hat_body), sizeof(hat_strip), hat_strip);
+	glBufferSubData(GL_ARRAY_BUFFER, sizeof(hat_leaf) + sizeof(hat_body) + sizeof(hat_strip), sizeof(hat_bottom), hat_bottom);
 
-	// Initialize vertex array object.
-	glGenVertexArrays(1, &VAO_shirt);
-	glBindVertexArray(VAO_shirt);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_shirt);
+	glGenVertexArrays(1, &VAO_hat);
+	glBindVertexArray(VAO_hat);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO_hat);
 	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
 	glEnableVertexAttribArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
 }
 
-void draw_shirt() {
-	glBindVertexArray(VAO_shirt);
-
-	glUniform3fv(loc_primitive_color, 1, shirt_color[SHIRT_LEFT_BODY]);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 6);
-
-	glUniform3fv(loc_primitive_color, 1, shirt_color[SHIRT_RIGHT_BODY]);
-	glDrawArrays(GL_TRIANGLE_FAN, 6, 6);
-
-	glUniform3fv(loc_primitive_color, 1, shirt_color[SHIRT_LEFT_COLLAR]);
-	glDrawArrays(GL_TRIANGLE_FAN, 12, 4);
-
-	glUniform3fv(loc_primitive_color, 1, shirt_color[SHIRT_RIGHT_COLLAR]);
-	glDrawArrays(GL_TRIANGLE_FAN, 16, 4);
-
-	glUniform3fv(loc_primitive_color, 1, shirt_color[SHIRT_FRONT_POCKET]);
-	glDrawArrays(GL_TRIANGLE_FAN, 20, 6);
-
-	glUniform3fv(loc_primitive_color, 1, shirt_color[SHIRT_BUTTON1]);
-	glDrawArrays(GL_TRIANGLE_FAN, 26, 3);
-
-	glUniform3fv(loc_primitive_color, 1, shirt_color[SHIRT_BUTTON2]);
-	glDrawArrays(GL_TRIANGLE_FAN, 29, 3);
-
-	glUniform3fv(loc_primitive_color, 1, shirt_color[SHIRT_BUTTON3]);
-	glDrawArrays(GL_TRIANGLE_FAN, 32, 3);
-
-	glUniform3fv(loc_primitive_color, 1, shirt_color[SHIRT_BUTTON4]);
-	glDrawArrays(GL_TRIANGLE_FAN, 35, 3);
-	glBindVertexArray(0);
-}
-
-//house
-#define HOUSE_ROOF 0
-#define HOUSE_BODY 1
-#define HOUSE_CHIMNEY 2
-#define HOUSE_DOOR 3
-#define HOUSE_WINDOW 4
-
-GLfloat roof[3][2] = { { -12.0, 0.0 },{ 0.0, 12.0 },{ 12.0, 0.0 } };
-GLfloat house_body[4][2] = { { -12.0, -14.0 },{ -12.0, 0.0 },{ 12.0, 0.0 },{ 12.0, -14.0 } };
-GLfloat chimney[4][2] = { { 6.0, 6.0 },{ 6.0, 14.0 },{ 10.0, 14.0 },{ 10.0, 2.0 } };
-GLfloat door[4][2] = { { -8.0, -14.0 },{ -8.0, -8.0 },{ -4.0, -8.0 },{ -4.0, -14.0 } };
-GLfloat window[4][2] = { { 4.0, -6.0 },{ 4.0, -2.0 },{ 8.0, -2.0 },{ 8.0, -6.0 } };
-
-GLfloat house_color[5][3] = {
-	{ 200 / 255.0f, 39 / 255.0f, 42 / 255.0f },
-	{ 235 / 255.0f, 225 / 255.0f, 196 / 255.0f },
-	{ 255 / 255.0f, 0 / 255.0f, 0 / 255.0f },
-	{ 233 / 255.0f, 113 / 255.0f, 23 / 255.0f },
-	{ 44 / 255.0f, 180 / 255.0f, 49 / 255.0f }
-};
-
-GLuint VBO_house, VAO_house;
-void prepare_house() {
-	GLsizeiptr buffer_size = sizeof(roof) + sizeof(house_body) + sizeof(chimney) + sizeof(door)
-		+ sizeof(window);
-
-	// Initialize vertex buffer object.
-	glGenBuffers(1, &VBO_house);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_house);
-	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW); // allocate buffer object memory
-
-	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(roof), roof);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(roof), sizeof(house_body), house_body);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(roof) + sizeof(house_body), sizeof(chimney), chimney);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(roof) + sizeof(house_body) + sizeof(chimney), sizeof(door), door);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(roof) + sizeof(house_body) + sizeof(chimney) + sizeof(door),
-		sizeof(window), window);
-
-	// Initialize vertex array object.
-	glGenVertexArrays(1, &VAO_house);
-	glBindVertexArray(VAO_house);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_house);
-	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
-	glEnableVertexAttribArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindVertexArray(0);
-}
-
-void draw_house() {
-	glBindVertexArray(VAO_house);
-
-	glUniform3fv(loc_primitive_color, 1, house_color[HOUSE_ROOF]);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 3);
-
-	glUniform3fv(loc_primitive_color, 1, house_color[HOUSE_BODY]);
-	glDrawArrays(GL_TRIANGLE_FAN, 3, 4);
-
-	glUniform3fv(loc_primitive_color, 1, house_color[HOUSE_CHIMNEY]);
-	glDrawArrays(GL_TRIANGLE_FAN, 7, 4);
-
-	glUniform3fv(loc_primitive_color, 1, house_color[HOUSE_DOOR]);
-	glDrawArrays(GL_TRIANGLE_FAN, 11, 4);
-
-	glUniform3fv(loc_primitive_color, 1, house_color[HOUSE_WINDOW]);
-	glDrawArrays(GL_TRIANGLE_FAN, 15, 4);
-
-	glBindVertexArray(0);
-}
-
-//car
-#define CAR_BODY 0
-#define CAR_FRAME 1
-#define CAR_WINDOW 2
-#define CAR_LEFT_LIGHT 3
-#define CAR_RIGHT_LIGHT 4
-#define CAR_LEFT_WHEEL 5
-#define CAR_RIGHT_WHEEL 6
-
-GLfloat car_body[4][2] = { { -16.0, -8.0 },{ -16.0, 0.0 },{ 16.0, 0.0 },{ 16.0, -8.0 } };
-GLfloat car_frame[4][2] = { { -10.0, 0.0 },{ -10.0, 10.0 },{ 10.0, 10.0 },{ 10.0, 0.0 } };
-GLfloat car_window[4][2] = { { -8.0, 0.0 },{ -8.0, 8.0 },{ 8.0, 8.0 },{ 8.0, 0.0 } };
-GLfloat car_left_light[4][2] = { { -9.0, -6.0 },{ -10.0, -5.0 },{ -9.0, -4.0 },{ -8.0, -5.0 } };
-GLfloat car_right_light[4][2] = { { 9.0, -6.0 },{ 8.0, -5.0 },{ 9.0, -4.0 },{ 10.0, -5.0 } };
-GLfloat car_left_wheel[4][2] = { { -10.0, -12.0 },{ -10.0, -8.0 },{ -6.0, -8.0 },{ -6.0, -12.0 } };
-GLfloat car_right_wheel[4][2] = { { 6.0, -12.0 },{ 6.0, -8.0 },{ 10.0, -8.0 },{ 10.0, -12.0 } };
-
-GLfloat car_color[7][3] = {
-	{ 0 / 255.0f, 149 / 255.0f, 159 / 255.0f },
-	{ 0 / 255.0f, 149 / 255.0f, 159 / 255.0f },
-	{ 216 / 255.0f, 208 / 255.0f, 174 / 255.0f },
-	{ 249 / 255.0f, 244 / 255.0f, 0 / 255.0f },
-	{ 249 / 255.0f, 244 / 255.0f, 0 / 255.0f },
-	{ 21 / 255.0f, 30 / 255.0f, 26 / 255.0f },
-	{ 21 / 255.0f, 30 / 255.0f, 26 / 255.0f }
-};
-
-GLuint VBO_car, VAO_car;
-void prepare_car() {
-	GLsizeiptr buffer_size = sizeof(car_body) + sizeof(car_frame) + sizeof(car_window) + sizeof(car_left_light)
-		+ sizeof(car_right_light) + sizeof(car_left_wheel) + sizeof(car_right_wheel);
-
-	// Initialize vertex buffer object.
-	glGenBuffers(1, &VBO_car);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_car);
-	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW); // allocate buffer object memory
-
-	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(car_body), car_body);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car_body), sizeof(car_frame), car_frame);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car_body) + sizeof(car_frame), sizeof(car_window), car_window);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car_body) + sizeof(car_frame) + sizeof(car_window), sizeof(car_left_light), car_left_light);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car_body) + sizeof(car_frame) + sizeof(car_window) + sizeof(car_left_light),
-		sizeof(car_right_light), car_right_light);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car_body) + sizeof(car_frame) + sizeof(car_window) + sizeof(car_left_light)
-		+ sizeof(car_right_light), sizeof(car_left_wheel), car_left_wheel);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car_body) + sizeof(car_frame) + sizeof(car_window) + sizeof(car_left_light)
-		+ sizeof(car_right_light) + sizeof(car_left_wheel), sizeof(car_right_wheel), car_right_wheel);
-
-	// Initialize vertex array object.
-	glGenVertexArrays(1, &VAO_car);
-	glBindVertexArray(VAO_car);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_car);
-	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
-	glEnableVertexAttribArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindVertexArray(0);
-}
-
-void draw_car() {
-	glBindVertexArray(VAO_car);
-
-	glUniform3fv(loc_primitive_color, 1, car_color[CAR_BODY]);
+void draw_hat() {
+	glBindVertexArray(VAO_hat);
+	glUniform3fv(loc_primitive_color, 1, hat_color[HAT_LEAF]);
 	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glUniform3fv(loc_primitive_color, 1, car_color[CAR_FRAME]);
+	glUniform3fv(loc_primitive_color, 1, hat_color[HAT_BODY]);
 	glDrawArrays(GL_TRIANGLE_FAN, 4, 4);
-
-	glUniform3fv(loc_primitive_color, 1, car_color[CAR_WINDOW]);
+	glUniform3fv(loc_primitive_color, 1, hat_color[HAT_STRIP]);
 	glDrawArrays(GL_TRIANGLE_FAN, 8, 4);
-
-	glUniform3fv(loc_primitive_color, 1, car_color[CAR_LEFT_LIGHT]);
+	glUniform3fv(loc_primitive_color, 1, hat_color[HAT_BOTTOM]);
 	glDrawArrays(GL_TRIANGLE_FAN, 12, 4);
-
-	glUniform3fv(loc_primitive_color, 1, car_color[CAR_RIGHT_LIGHT]);
-	glDrawArrays(GL_TRIANGLE_FAN, 16, 4);
-
-	glUniform3fv(loc_primitive_color, 1, car_color[CAR_LEFT_WHEEL]);
-	glDrawArrays(GL_TRIANGLE_FAN, 20, 4);
-
-	glUniform3fv(loc_primitive_color, 1, car_color[CAR_RIGHT_WHEEL]);
-	glDrawArrays(GL_TRIANGLE_FAN, 24, 4);
-
 	glBindVertexArray(0);
 }
 
-//draw cocktail
+
+// ================================================================
+//  cocktail  (Level 3)
+// ================================================================
 #define COCKTAIL_NECK 0
 #define COCKTAIL_LIQUID 1
 #define COCKTAIL_REMAIN 2
@@ -481,37 +234,31 @@ GLfloat deco[8][2] = { { 12.0, 12.0 },{ 10.0, 14.0 },{ 10.0, 16.0 },{ 12.0, 18.0
 
 GLfloat cocktail_color[5][3] = {
 	{ 235 / 255.0f, 225 / 255.0f, 196 / 255.0f },
-	{ 0 / 255.0f, 63 / 255.0f, 122 / 255.0f },
+	{   0 / 255.0f,  63 / 255.0f, 122 / 255.0f },
 	{ 235 / 255.0f, 225 / 255.0f, 196 / 255.0f },
-	{ 191 / 255.0f, 255 / 255.0f, 0 / 255.0f },
-	{ 218 / 255.0f, 165 / 255.0f, 32 / 255.0f }
+	{ 191 / 255.0f, 255 / 255.0f,   0 / 255.0f },
+	{ 218 / 255.0f, 165 / 255.0f,  32 / 255.0f }
 };
 
 GLuint VBO_cocktail, VAO_cocktail;
+
 void prepare_cocktail() {
-	GLsizeiptr buffer_size = sizeof(neck) + sizeof(liquid) + sizeof(remain) + sizeof(straw)
-		+ sizeof(deco);
+	GLsizeiptr buffer_size = sizeof(neck) + sizeof(liquid) + sizeof(remain) + sizeof(straw) + sizeof(deco);
 
-	// Initialize vertex buffer object.
 	glGenBuffers(1, &VBO_cocktail);
-
 	glBindBuffer(GL_ARRAY_BUFFER, VBO_cocktail);
-	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW); // allocate buffer object memory
+	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW);
 
 	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(neck), neck);
 	glBufferSubData(GL_ARRAY_BUFFER, sizeof(neck), sizeof(liquid), liquid);
 	glBufferSubData(GL_ARRAY_BUFFER, sizeof(neck) + sizeof(liquid), sizeof(remain), remain);
 	glBufferSubData(GL_ARRAY_BUFFER, sizeof(neck) + sizeof(liquid) + sizeof(remain), sizeof(straw), straw);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(neck) + sizeof(liquid) + sizeof(remain) + sizeof(straw),
-		sizeof(deco), deco);
+	glBufferSubData(GL_ARRAY_BUFFER, sizeof(neck) + sizeof(liquid) + sizeof(remain) + sizeof(straw), sizeof(deco), deco);
 
-	// Initialize vertex array object.
 	glGenVertexArrays(1, &VAO_cocktail);
 	glBindVertexArray(VAO_cocktail);
-
 	glBindBuffer(GL_ARRAY_BUFFER, VBO_cocktail);
 	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
 	glEnableVertexAttribArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
@@ -519,178 +266,23 @@ void prepare_cocktail() {
 
 void draw_cocktail() {
 	glBindVertexArray(VAO_cocktail);
-
 	glUniform3fv(loc_primitive_color, 1, cocktail_color[COCKTAIL_NECK]);
 	glDrawArrays(GL_TRIANGLE_FAN, 0, 6);
-
 	glUniform3fv(loc_primitive_color, 1, cocktail_color[COCKTAIL_LIQUID]);
 	glDrawArrays(GL_TRIANGLE_FAN, 6, 6);
-
 	glUniform3fv(loc_primitive_color, 1, cocktail_color[COCKTAIL_REMAIN]);
 	glDrawArrays(GL_TRIANGLE_FAN, 12, 4);
-
 	glUniform3fv(loc_primitive_color, 1, cocktail_color[COCKTAIL_STRAW]);
 	glDrawArrays(GL_TRIANGLE_FAN, 16, 4);
-
 	glUniform3fv(loc_primitive_color, 1, cocktail_color[COCKTAIL_DECO]);
 	glDrawArrays(GL_TRIANGLE_FAN, 20, 8);
-
 	glBindVertexArray(0);
 }
 
-//draw car2
-#define CAR2_BODY 0
-#define CAR2_FRONT_WINDOW 1
-#define CAR2_BACK_WINDOW 2
-#define CAR2_FRONT_WHEEL 3
-#define CAR2_BACK_WHEEL 4
-#define CAR2_LIGHT1 5
-#define CAR2_LIGHT2 6
 
-GLfloat car2_body[8][2] = { { -18.0, -7.0 },{ -18.0, 0.0 },{ -13.0, 0.0 },{ -10.0, 8.0 },{ 10.0, 8.0 },{ 13.0, 0.0 },{ 18.0, 0.0 },{ 18.0, -7.0 } };
-GLfloat car2_front_window[4][2] = { { -10.0, 0.0 },{ -8.0, 6.0 },{ -2.0, 6.0 },{ -2.0, 0.0 } };
-GLfloat car2_back_window[4][2] = { { 0.0, 0.0 },{ 0.0, 6.0 },{ 8.0, 6.0 },{ 10.0, 0.0 } };
-GLfloat car2_front_wheel[8][2] = { { -11.0, -11.0 },{ -13.0, -8.0 },{ -13.0, -7.0 },{ -11.0, -4.0 },{ -7.0, -4.0 },{ -5.0, -7.0 },{ -5.0, -8.0 },{ -7.0, -11.0 } };
-GLfloat car2_back_wheel[8][2] = { { 7.0, -11.0 },{ 5.0, -8.0 },{ 5.0, -7.0 },{ 7.0, -4.0 },{ 11.0, -4.0 },{ 13.0, -7.0 },{ 13.0, -8.0 },{ 11.0, -11.0 } };
-GLfloat car2_light1[3][2] = { { -18.0, -1.0 },{ -17.0, -2.0 },{ -18.0, -3.0 } };
-GLfloat car2_light2[3][2] = { { -18.0, -4.0 },{ -17.0, -5.0 },{ -18.0, -6.0 } };
-
-GLfloat car2_color[7][3] = {
-	{ 100 / 255.0f, 141 / 255.0f, 159 / 255.0f },
-	{ 235 / 255.0f, 219 / 255.0f, 208 / 255.0f },
-	{ 235 / 255.0f, 219 / 255.0f, 208 / 255.0f },
-	{ 0 / 255.0f, 0 / 255.0f, 0 / 255.0f },
-	{ 0 / 255.0f, 0 / 255.0f, 0 / 255.0f },
-	{ 249 / 255.0f, 244 / 255.0f, 0 / 255.0f },
-	{ 249 / 255.0f, 244 / 255.0f, 0 / 255.0f }
-};
-
-GLuint VBO_car2, VAO_car2;
-void prepare_car2() {
-	GLsizeiptr buffer_size = sizeof(car2_body) + sizeof(car2_front_window) + sizeof(car2_back_window) + sizeof(car2_front_wheel)
-		+ sizeof(car2_back_wheel) + sizeof(car2_light1) + sizeof(car2_light2);
-
-	// Initialize vertex buffer object.
-	glGenBuffers(1, &VBO_car2);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_car2);
-	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW); // allocate buffer object memory
-
-	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(car2_body), car2_body);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car2_body), sizeof(car2_front_window), car2_front_window);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car2_body) + sizeof(car2_front_window), sizeof(car2_back_window), car2_back_window);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car2_body) + sizeof(car2_front_window) + sizeof(car2_back_window), sizeof(car2_front_wheel), car2_front_wheel);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car2_body) + sizeof(car2_front_window) + sizeof(car2_back_window) + sizeof(car2_front_wheel),
-		sizeof(car2_back_wheel), car2_back_wheel);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car2_body) + sizeof(car2_front_window) + sizeof(car2_back_window) + sizeof(car2_front_wheel)
-		+ sizeof(car2_back_wheel), sizeof(car2_light1), car2_light1);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(car2_body) + sizeof(car2_front_window) + sizeof(car2_back_window) + sizeof(car2_front_wheel)
-		+ sizeof(car2_back_wheel) + sizeof(car2_light1), sizeof(car2_light2), car2_light2);
-
-	// Initialize vertex array object.
-	glGenVertexArrays(1, &VAO_car2);
-	glBindVertexArray(VAO_car2);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_car2);
-	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
-	glEnableVertexAttribArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindVertexArray(0);
-}
-
-void draw_car2() {
-	glBindVertexArray(VAO_car2);
-
-	glUniform3fv(loc_primitive_color, 1, car2_color[CAR2_BODY]);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 8);
-
-	glUniform3fv(loc_primitive_color, 1, car2_color[CAR2_FRONT_WINDOW]);
-	glDrawArrays(GL_TRIANGLE_FAN, 8, 4);
-
-	glUniform3fv(loc_primitive_color, 1, car2_color[CAR2_BACK_WINDOW]);
-	glDrawArrays(GL_TRIANGLE_FAN, 12, 4);
-
-	glUniform3fv(loc_primitive_color, 1, car2_color[CAR2_FRONT_WHEEL]);
-	glDrawArrays(GL_TRIANGLE_FAN, 16, 8);
-
-	glUniform3fv(loc_primitive_color, 1, car2_color[CAR2_BACK_WHEEL]);
-	glDrawArrays(GL_TRIANGLE_FAN, 24, 8);
-
-	glUniform3fv(loc_primitive_color, 1, car2_color[CAR2_LIGHT1]);
-	glDrawArrays(GL_TRIANGLE_FAN, 32, 3);
-
-	glUniform3fv(loc_primitive_color, 1, car2_color[CAR2_LIGHT2]);
-	glDrawArrays(GL_TRIANGLE_FAN, 35, 3);
-
-	glBindVertexArray(0);
-}
-
-// hat
-#define HAT_LEAF 0
-#define HAT_BODY 1
-#define HAT_STRIP 2
-#define HAT_BOTTOM 3
-
-GLfloat hat_leaf[4][2] = { { 3.0, 20.0 },{ 3.0, 28.0 },{ 9.0, 32.0 },{ 9.0, 24.0 } };
-GLfloat hat_body[4][2] = { { -19.5, 2.0 },{ 19.5, 2.0 },{ 15.0, 20.0 },{ -15.0, 20.0 } };
-GLfloat hat_strip[4][2] = { { -20.0, 0.0 },{ 20.0, 0.0 },{ 19.5, 2.0 },{ -19.5, 2.0 } };
-GLfloat hat_bottom[4][2] = { { 25.0, 0.0 },{ -25.0, 0.0 },{ -25.0, -4.0 },{ 25.0, -4.0 } };
-
-GLfloat hat_color[4][3] = {
-	{ 167 / 255.0f, 255 / 255.0f, 55 / 255.0f },
-{ 255 / 255.0f, 144 / 255.0f, 32 / 255.0f },
-{ 255 / 255.0f, 40 / 255.0f, 33 / 255.0f },
-{ 255 / 255.0f, 144 / 255.0f, 32 / 255.0f }
-};
-
-GLuint VBO_hat, VAO_hat;
-
-void prepare_hat() {
-	GLsizeiptr buffer_size = sizeof(hat_leaf) + sizeof(hat_body) + sizeof(hat_strip) + sizeof(hat_bottom);
-
-	// Initialize vertex buffer object.
-	glGenBuffers(1, &VBO_hat);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_hat);
-	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW); // allocate buffer object memory
-
-	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(hat_leaf), hat_leaf);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(hat_leaf), sizeof(hat_body), hat_body);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(hat_leaf) + sizeof(hat_body), sizeof(hat_strip), hat_strip);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(hat_leaf) + sizeof(hat_body) + sizeof(hat_strip), sizeof(hat_bottom), hat_bottom);
-
-	// Initialize vertex array object.
-	glGenVertexArrays(1, &VAO_hat);
-	glBindVertexArray(VAO_hat);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_hat);
-	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
-	glEnableVertexAttribArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindVertexArray(0);
-}
-
-void draw_hat() {
-	glBindVertexArray(VAO_hat);
-
-	glUniform3fv(loc_primitive_color, 1, hat_color[HAT_LEAF]);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glUniform3fv(loc_primitive_color, 1, hat_color[HAT_BODY]);
-	glDrawArrays(GL_TRIANGLE_FAN, 4, 4);
-
-	glUniform3fv(loc_primitive_color, 1, hat_color[HAT_STRIP]);
-	glDrawArrays(GL_TRIANGLE_FAN, 8, 4);
-
-	glUniform3fv(loc_primitive_color, 1, hat_color[HAT_BOTTOM]);
-	glDrawArrays(GL_TRIANGLE_FAN, 12, 4);
-
-	glBindVertexArray(0);
-}
-
-// cake
+// ================================================================
+//  cake  (Level 4)
+// ================================================================
 #define CAKE_FIRE 0
 #define CAKE_CANDLE 1
 #define CAKE_BODY 2
@@ -704,11 +296,11 @@ GLfloat cake_bottom[4][2] = { { -10.0, 1.0 },{ -10.0, 5.0 },{ 10.0, 5.0 },{ 10.0
 GLfloat cake_decorate[4][2] = { { -10.0, 0.0 },{ -10.0, 1.0 },{ 10.0, 1.0 },{ 10.0, 0.0 } };
 
 GLfloat cake_color[5][3] = {
-	{ 255 / 255.0f, 0 / 255.0f, 0 / 255.0f },
-{ 255 / 255.0f, 204 / 255.0f, 0 / 255.0f },
-{ 255 / 255.0f, 102 / 255.0f, 255 / 255.0f },
-{ 255 / 255.0f, 102 / 255.0f, 255 / 255.0f },
-{ 102 / 255.0f, 51 / 255.0f, 0 / 255.0f }
+	{ 255 / 255.0f,   0 / 255.0f,   0 / 255.0f },
+	{ 255 / 255.0f, 204 / 255.0f,   0 / 255.0f },
+	{ 255 / 255.0f, 102 / 255.0f, 255 / 255.0f },
+	{ 255 / 255.0f, 102 / 255.0f, 255 / 255.0f },
+	{ 102 / 255.0f,  51 / 255.0f,   0 / 255.0f }
 };
 
 GLuint VBO_cake, VAO_cake;
@@ -717,11 +309,9 @@ void prepare_cake() {
 	int size = sizeof(cake_fire);
 	GLsizeiptr buffer_size = sizeof(cake_fire) * 5;
 
-	// Initialize vertex buffer object.
 	glGenBuffers(1, &VBO_cake);
-
 	glBindBuffer(GL_ARRAY_BUFFER, VBO_cake);
-	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW); // allocate buffer object memory
+	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW);
 
 	glBufferSubData(GL_ARRAY_BUFFER, 0, size, cake_fire);
 	glBufferSubData(GL_ARRAY_BUFFER, size, size, cake_candle);
@@ -729,13 +319,10 @@ void prepare_cake() {
 	glBufferSubData(GL_ARRAY_BUFFER, size * 3, size, cake_bottom);
 	glBufferSubData(GL_ARRAY_BUFFER, size * 4, size, cake_decorate);
 
-	// Initialize vertex array object.
 	glGenVertexArrays(1, &VAO_cake);
 	glBindVertexArray(VAO_cake);
-
 	glBindBuffer(GL_ARRAY_BUFFER, VBO_cake);
 	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
 	glEnableVertexAttribArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
@@ -743,183 +330,330 @@ void prepare_cake() {
 
 void draw_cake() {
 	glBindVertexArray(VAO_cake);
-
 	glUniform3fv(loc_primitive_color, 1, cake_color[CAKE_FIRE]);
 	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
 	glUniform3fv(loc_primitive_color, 1, cake_color[CAKE_CANDLE]);
 	glDrawArrays(GL_TRIANGLE_FAN, 4, 4);
-
 	glUniform3fv(loc_primitive_color, 1, cake_color[CAKE_BODY]);
 	glDrawArrays(GL_TRIANGLE_FAN, 8, 4);
-
 	glUniform3fv(loc_primitive_color, 1, cake_color[CAKE_BOTTOM]);
 	glDrawArrays(GL_TRIANGLE_FAN, 12, 4);
-
 	glUniform3fv(loc_primitive_color, 1, cake_color[CAKE_DECORATE]);
 	glDrawArrays(GL_TRIANGLE_FAN, 16, 4);
-
 	glBindVertexArray(0);
 }
 
-// sword
 
-#define SWORD_BODY 0
-#define SWORD_BODY2 1
-#define SWORD_HEAD 2
-#define SWORD_HEAD2 3
-#define SWORD_IN 4
-#define SWORD_DOWN 5
-#define SWORD_BODY_IN 6
+// ================================================================
+//  star  (Level 2) - 자체 설계 물체 #1
+//
+//  5각별을 TRIANGLE_FAN 하나로 표현.
+//  설계 방법: 외부 꼭짓점 5개(반지름 14)와 오목한 내부 점 5개(반지름 6)를
+//  72도 간격으로 교대 배치. 중심점에서 fan을 펼쳐 삼각형을 채움.
+//  각도는 맨 위 꼭짓점부터 시계 방향으로 72도씩 증가.
+//  좌표 계산: x = r * cos(θ), y = r * sin(θ)  (θ는 라디안)
+//
+//  정점 순서: 중심 → (외-0 내-0 외-1 내-1 외-2 내-2 외-3 내-3 외-4 내-4) → 마감
+//  총 12 정점
+// ================================================================
+#define STAR_BODY 0
 
-GLfloat sword_body[4][2] = { { -6.0, 0.0 },{ -6.0, -4.0 },{ 6.0, -4.0 },{ 6.0, 0.0 } };
-GLfloat sword_body2[4][2] = { { -2.0, -4.0 },{ -2.0, -6.0 } ,{ 2.0, -6.0 },{ 2.0, -4.0 } };
-GLfloat sword_head[4][2] = { { -2.0, 0.0 },{ -2.0, 16.0 } ,{ 2.0, 16.0 },{ 2.0, 0.0 } };
-GLfloat sword_head2[3][2] = { { -2.0, 16.0 },{ 0.0, 19.46 } ,{ 2.0, 16.0 } };
-GLfloat sword_in[4][2] = { { -0.3, 0.7 },{ -0.3, 15.3 } ,{ 0.3, 15.3 },{ 0.3, 0.7 } };
-GLfloat sword_down[4][2] = { { -2.0, -6.0 } ,{ 2.0, -6.0 },{ 4.0, -8.0 },{ -4.0, -8.0 } };
-GLfloat sword_body_in[4][2] = { { 0.0, -1.0 } ,{ 1.0, -2.732 },{ 0.0, -4.464 },{ -1.0, -2.732 } };
-
-GLfloat sword_color[7][3] = {
-	{ 139 / 255.0f, 69 / 255.0f, 19 / 255.0f },
-{ 139 / 255.0f, 69 / 255.0f, 19 / 255.0f },
-{ 155 / 255.0f, 155 / 255.0f, 155 / 255.0f },
-{ 155 / 255.0f, 155 / 255.0f, 155 / 255.0f },
-{ 0 / 255.0f, 0 / 255.0f, 0 / 255.0f },
-{ 139 / 255.0f, 69 / 255.0f, 19 / 255.0f },
-{ 255 / 255.0f, 0 / 255.0f, 0 / 255.0f }
+GLfloat star_body[12][2] = {
+	{  0.0f,   0.0f  },  // 중심
+	{  0.0f,  14.0f  },  // 외-0  90도  (r=14)
+	{ -3.53f,  4.85f },  // 내-0 126도  (r=6)
+	{-13.31f,  4.33f },  // 외-1 162도  (r=14)
+	{ -5.71f, -1.85f },  // 내-1 198도  (r=6)
+	{ -8.23f,-11.33f },  // 외-2 234도  (r=14)
+	{  0.0f,  -6.0f  },  // 내-2 270도  (r=6)
+	{  8.23f,-11.33f },  // 외-3 306도  (r=14)
+	{  5.71f, -1.85f },  // 내-3 342도  (r=6)
+	{ 13.31f,  4.33f },  // 외-4  18도  (r=14)
+	{  3.53f,  4.85f },  // 내-4  54도  (r=6)
+	{  0.0f,  14.0f  },  // 마감 (= 외-0, fan 닫기)
 };
 
-GLuint VBO_sword, VAO_sword;
+GLfloat star_color[1][3] = {
+	{ 255 / 255.0f, 215 / 255.0f, 0 / 255.0f }  // 금색
+};
 
-void prepare_sword() {
-	GLsizeiptr buffer_size = sizeof(sword_body) + sizeof(sword_body2) + sizeof(sword_head) + sizeof(sword_head2) + sizeof(sword_in) + sizeof(sword_down) + sizeof(sword_body_in);
+GLuint VBO_star, VAO_star;
 
-	// Initialize vertex buffer object.
-	glGenBuffers(1, &VBO_sword);
+void prepare_star() {
+	glGenBuffers(1, &VBO_star);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO_star);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(star_body), star_body, GL_STATIC_DRAW);
 
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_sword);
-	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW); // allocate buffer object memory
-
-	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(sword_body), sword_body);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(sword_body), sizeof(sword_body2), sword_body2);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(sword_body) + sizeof(sword_body2), sizeof(sword_head), sword_head);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(sword_body) + sizeof(sword_body2) + sizeof(sword_head), sizeof(sword_head2), sword_head2);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(sword_body) + sizeof(sword_body2) + sizeof(sword_head) + sizeof(sword_head2), sizeof(sword_in), sword_in);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(sword_body) + sizeof(sword_body2) + sizeof(sword_head) + sizeof(sword_head2) + sizeof(sword_in), sizeof(sword_down), sword_down);
-	glBufferSubData(GL_ARRAY_BUFFER, sizeof(sword_body) + sizeof(sword_body2) + sizeof(sword_head) + sizeof(sword_head2) + sizeof(sword_in) + sizeof(sword_down), sizeof(sword_body_in), sword_body_in);
-
-	// Initialize vertex array object.
-	glGenVertexArrays(1, &VAO_sword);
-	glBindVertexArray(VAO_sword);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO_sword);
+	glGenVertexArrays(1, &VAO_star);
+	glBindVertexArray(VAO_star);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO_star);
 	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
 	glEnableVertexAttribArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
 }
 
-void draw_sword() {
-	glBindVertexArray(VAO_sword);
-
-	glUniform3fv(loc_primitive_color, 1, sword_color[SWORD_BODY]);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glUniform3fv(loc_primitive_color, 1, sword_color[SWORD_BODY2]);
-	glDrawArrays(GL_TRIANGLE_FAN, 4, 4);
-
-	glUniform3fv(loc_primitive_color, 1, sword_color[SWORD_HEAD]);
-	glDrawArrays(GL_TRIANGLE_FAN, 8, 4);
-
-	glUniform3fv(loc_primitive_color, 1, sword_color[SWORD_HEAD2]);
-	glDrawArrays(GL_TRIANGLE_FAN, 12, 3);
-
-	glUniform3fv(loc_primitive_color, 1, sword_color[SWORD_IN]);
-	glDrawArrays(GL_TRIANGLE_FAN, 15, 4);
-
-	glUniform3fv(loc_primitive_color, 1, sword_color[SWORD_DOWN]);
-	glDrawArrays(GL_TRIANGLE_FAN, 19, 4);
-
-	glUniform3fv(loc_primitive_color, 1, sword_color[SWORD_BODY_IN]);
-	glDrawArrays(GL_TRIANGLE_FAN, 23, 4);
-
+void draw_star() {
+	glBindVertexArray(VAO_star);
+	glUniform3fv(loc_primitive_color, 1, star_color[STAR_BODY]);
+	glDrawArrays(GL_TRIANGLE_FAN, 0, 12);
 	glBindVertexArray(0);
 }
 
 
+// ================================================================
+//  fish  (Level 5) - 자체 설계 물체 #2
+//
+//  파트 5개: 몸통, 꼬리, 등지느러미, 배지느러미, 눈
+//  VBO 정점 순서:
+//    [0..9]   fish_body   TRIANGLE_FAN (10 정점)
+//    [10..12] fish_tail   TRIANGLES    ( 3 정점)
+//    [13..15] fish_dfin   TRIANGLES    ( 3 정점, 등지느러미)
+//    [16..18] fish_vfin   TRIANGLES    ( 3 정점, 배지느러미)
+//    [19]     fish_eye    POINTS       ( 1 정점)
+//
+//  +x 방향이 코. display()에서 +90도 로컬 회전으로 궤도 접선 방향을 향하게 함.
+// ================================================================
+#define FISH_BODY  0
+#define FISH_TAIL  1
+#define FISH_DFIN  2  // 등지느러미
+#define FISH_VFIN  3  // 배지느러미
+#define FISH_EYE   4
+
+GLfloat fish_body[10][2] = {
+	{  0.0f,  0.0f },  // 중심 허브
+	{ 15.0f,  0.0f },  // 코
+	{ 12.0f,  5.0f },
+	{  5.0f,  8.0f },
+	{ -5.0f,  7.0f },
+	{-15.0f,  0.0f },  // 꼬리 연결점
+	{ -5.0f, -7.0f },
+	{  5.0f, -8.0f },
+	{ 12.0f, -5.0f },
+	{ 15.0f,  0.0f },  // 마감 (코와 같음)
+};
+GLfloat fish_tail[3][2] = { {-15.0f, 0.0f}, {-25.0f, 9.0f}, {-25.0f, -9.0f} };
+GLfloat fish_dfin[3][2] = { {  0.0f, 8.0f}, {  4.0f, 15.0f}, { -6.0f,  8.0f} };  // 등지느러미
+GLfloat fish_vfin[3][2] = { {  0.0f,-8.0f}, {  3.0f,-14.0f}, { -4.0f, -8.0f} };  // 배지느러미
+GLfloat fish_eye[1][2] = { {  9.0f, 2.5f} };
+
+GLfloat fish_color[5][3] = {
+	{ 255 / 255.0f, 127 / 255.0f,  80 / 255.0f },  // 몸통 - 코랄
+	{ 200 / 255.0f,  80 / 255.0f,  40 / 255.0f },  // 꼬리
+	{ 255 / 255.0f, 190 / 255.0f, 110 / 255.0f },  // 등지느러미
+	{ 255 / 255.0f, 160 / 255.0f,  80 / 255.0f },  // 배지느러미 (약간 진하게)
+	{   0 / 255.0f,   0 / 255.0f,   0 / 255.0f },  // 눈
+};
+
+GLuint VBO_fish, VAO_fish;
+
+void prepare_fish() {
+	GLsizeiptr buffer_size = sizeof(fish_body) + sizeof(fish_tail)
+		+ sizeof(fish_dfin) + sizeof(fish_vfin) + sizeof(fish_eye);
+
+	glGenBuffers(1, &VBO_fish);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO_fish);
+	glBufferData(GL_ARRAY_BUFFER, buffer_size, NULL, GL_STATIC_DRAW);
+
+	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(fish_body), fish_body);
+	glBufferSubData(GL_ARRAY_BUFFER, sizeof(fish_body), sizeof(fish_tail), fish_tail);
+	glBufferSubData(GL_ARRAY_BUFFER, sizeof(fish_body) + sizeof(fish_tail), sizeof(fish_dfin), fish_dfin);
+	glBufferSubData(GL_ARRAY_BUFFER, sizeof(fish_body) + sizeof(fish_tail) + sizeof(fish_dfin), sizeof(fish_vfin), fish_vfin);
+	glBufferSubData(GL_ARRAY_BUFFER, sizeof(fish_body) + sizeof(fish_tail) + sizeof(fish_dfin) + sizeof(fish_vfin), sizeof(fish_eye), fish_eye);
+
+	glGenVertexArrays(1, &VAO_fish);
+	glBindVertexArray(VAO_fish);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO_fish);
+	glVertexAttribPointer(LOC_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
+	glEnableVertexAttribArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+}
+
+void draw_fish() {
+	glBindVertexArray(VAO_fish);
+	glUniform3fv(loc_primitive_color, 1, fish_color[FISH_BODY]);
+	glDrawArrays(GL_TRIANGLE_FAN, 0, 10);
+	glUniform3fv(loc_primitive_color, 1, fish_color[FISH_TAIL]);
+	glDrawArrays(GL_TRIANGLES, 10, 3);
+	glUniform3fv(loc_primitive_color, 1, fish_color[FISH_DFIN]);
+	glDrawArrays(GL_TRIANGLES, 13, 3);
+	glUniform3fv(loc_primitive_color, 1, fish_color[FISH_VFIN]);
+	glDrawArrays(GL_TRIANGLES, 16, 3);
+	glUniform3fv(loc_primitive_color, 1, fish_color[FISH_EYE]);
+	glPointSize(5.0f);
+	glDrawArrays(GL_POINTS, 19, 1);
+	glPointSize(1.0f);
+	glBindVertexArray(0);
+}
+
+
+// ================================================================
+//  display
+//
+//  계층 구조:
+//    Level 0: airplane  - 마우스로 이동
+//    Level 1: hat x3    - L0 중심 원 운동, '1'키 on/off
+//    Level 2: star x1   - L1 중심 원 운동 + 크기 펄싱 (자체물체)
+//    Level 3: cocktail x2 - L2 중심 사각형 궤도
+//    Level 4: cake x1   - L3 중심 리사주 8자 궤도
+//    Level 5: fish x1   - L4 중심 원 운동, '5'키 on/off (자체물체)
+// ================================================================
 void display(void) {
 	glm::mat4 ModelMatrix;
+	glm::mat4 L0_M, L1_M, L2_M, L3_M, L4_M, L5_M;
+	float angle, ox, oy, t, T, s, scale;
 
 	glClear(GL_COLOR_BUFFER_BIT);
 
+	// axes
 	ModelMatrix = glm::mat4(1.0f);
 	ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
 	glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
 	draw_axes();
 
-	ModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(-500.0f, 0.0f, 0.0f));
+	// ----- Level 0: airplane -----
+	// 마우스 클릭/드래그 위치로 이동
+	L0_M = glm::translate(glm::mat4(1.0f), glm::vec3(L0_x, L0_y, 0.0f));
+
+	ModelMatrix = glm::scale(L0_M, glm::vec3(1.5f, 1.5f, 1.0f));
 	ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
 	glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
 	draw_airplane();
 
-	ModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(-300.0f, 0.0f, 0.0f));
-	ModelMatrix = glm::scale(ModelMatrix, glm::vec3(2.0f, 2.0f, 1.0f));
-	ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
-	glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
-	draw_shirt();
+	// ----- Level 1: hat x3 -----
+	// L0 중심으로 120도 간격, 원 운동. '1'키로 on/off
+	for (int i = 0; i < 3; i++) {
+		angle = clock_L1 * 0.015f + i * (2.0f * 3.14159f / 3.0f);
 
-	ModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(-100.0f, 0.0f, 0.0f));
-	ModelMatrix = glm::scale(ModelMatrix, glm::vec3(2.0f, 2.0f, 1.0f));
-	ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
-	glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
-	draw_house();
+		L1_M = L0_M;
+		L1_M = glm::rotate(L1_M, angle, glm::vec3(0.0f, 0.0f, 1.0f));
+		L1_M = glm::translate(L1_M, glm::vec3(120.0f, 0.0f, 0.0f));
 
-	ModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(100.0f, 0.0f, 0.0f));
-	ModelMatrix = glm::scale(ModelMatrix, glm::vec3(2.0f, 2.0f, 1.0f));
-	ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
-	glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
-	draw_car();
+		ModelMatrix = glm::scale(L1_M, glm::vec3(0.7f, 0.7f, 1.0f));
+		ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
+		glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
+		draw_hat();
 
-	ModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(300.0f, 0.0f, 0.0f));
-	ModelMatrix = glm::scale(ModelMatrix, glm::vec3(2.0f, 2.0f, 1.0f));
-	ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
-	glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
-	draw_cocktail();
+		// ----- Level 2: star -----
+		// L1 중심 원 운동 + sin으로 크기 펄싱
+		angle = timestamp * 0.025f + i * (2.0f * 3.14159f / 3.0f);
+		scale = 1.0f + 0.55f * sinf(timestamp * 0.06f);
 
-	ModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(500.0f, 0.0f, 0.0f));
-	ModelMatrix = glm::scale(ModelMatrix, glm::vec3(2.0f, 2.0f, 1.0f));
-	ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
-	glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
-	draw_car2();
+		L2_M = L1_M;
+		L2_M = glm::rotate(L2_M, angle, glm::vec3(0.0f, 0.0f, 1.0f));
+		L2_M = glm::translate(L2_M, glm::vec3(65.0f, 0.0f, 0.0f));
 
-	ModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -100.0f, 0.0f));
-	ModelMatrix = glm::scale(ModelMatrix, glm::vec3(2.0f, 2.0f, 1.0f));
-	ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
-	glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
-	draw_hat();
+		ModelMatrix = glm::scale(L2_M, glm::vec3(scale, scale, 1.0f));
+		ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
+		glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
+		draw_star();
 
-	ModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(-400.0f, -100.0f, 0.0f));
-	ModelMatrix = glm::scale(ModelMatrix, glm::vec3(5.0f, 5.0f, 1.0f));
-	ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
-	glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
-	draw_cake();
+		// ----- Level 3: cocktail x2 -----
+		// L2 중심 사각형 궤도. j=0,1 두 개가 정사각형 위에서 반 바퀴 어긋나게 돌음
+		for (int j = 0; j < 2; j++) {
+			t = timestamp * 0.008f + j * 2.0f;  // j*2.0 → 반 바퀴 오프셋
+			T = fmodf(t, 4.0f);
+			if (T < 0.0f) T += 4.0f;
+			s = 40.0f;  // 정사각형 반변 길이
 
-	ModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(400.0f, -100.0f, 0.0f));
-	ModelMatrix = glm::scale(ModelMatrix, glm::vec3(3.5f, 3.5f, 1.0f));
-	ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
-	glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
-	draw_sword();
+			if (T < 1.0f) { ox = -s + T * 2 * s;     oy = -s; }
+			else if (T < 2.0f) { ox = s;                   oy = -s + (T - 1) * 2 * s; }
+			else if (T < 3.0f) { ox = s - (T - 2) * 2 * s; oy = s; }
+			else { ox = -s;                  oy = s - (T - 3) * 2 * s; }
 
-	glFlush();
+			L3_M = glm::translate(L2_M, glm::vec3(ox, oy, 0.0f));
+
+			ModelMatrix = glm::scale(L3_M, glm::vec3(0.45f, 0.45f, 1.0f));
+			ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
+			glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
+			draw_cocktail();
+
+			// ----- Level 4: cake -----
+			// L3 중심 리사주 8자 궤도: x=rx*cos(t), y=ry*sin(2t)
+			// clock_L4를 사용해서 '4'키로 궤도를 멈출 수 있음 (요구 4)
+			// off 시에도 L3(상위 레벨)의 움직임에는 여전히 종속됨
+			t = clock_L4 * 0.018f + j * 3.14159f;
+			ox = 22.0f * cosf(t);
+			oy = 13.0f * sinf(2.0f * t);
+
+			L4_M = glm::translate(L3_M, glm::vec3(ox, oy, 0.0f));
+
+			ModelMatrix = glm::scale(L4_M, glm::vec3(0.35f, 0.35f, 1.0f));
+			ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
+			glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
+			draw_cake();
+
+			// ----- Level 5: fish -----
+			// L4 중심 원 운동. '5'키로 on/off
+			// 물고기 코가 진행 방향을 향하도록 +90도 로컬 회전
+			angle = clock_L5 * 0.04f + j * 3.14159f;
+
+			L5_M = L4_M;
+			L5_M = glm::rotate(L5_M, angle, glm::vec3(0.0f, 0.0f, 1.0f));
+			L5_M = glm::translate(L5_M, glm::vec3(16.0f, 0.0f, 0.0f));
+
+			ModelMatrix = glm::rotate(L5_M, 3.14159f * 0.5f, glm::vec3(0.0f, 0.0f, 1.0f));
+			ModelMatrix = glm::scale(ModelMatrix, glm::vec3(0.4f, 0.4f, 1.0f));
+			ModelViewProjectionMatrix = ViewProjectionMatrix * ModelMatrix;
+			glUniformMatrix4fv(loc_ModelViewProjectionMatrix, 1, GL_FALSE, &ModelViewProjectionMatrix[0][0]);
+			draw_fish();
+		}
+	}
+
+	glutSwapBuffers();
+}
+
+
+void myTimer(int value) {
+	timestamp++;
+	if (anim_L1_on) clock_L1++;
+	if (anim_L4_on) clock_L4++;
+	if (anim_L5_on) clock_L5++;
+	glutPostRedisplay();
+	glutTimerFunc(16, myTimer, 0);
 }
 
 void keyboard(unsigned char key, int x, int y) {
 	switch (key) {
-	case 27: // ESC key
-		glutLeaveMainLoop(); // Incur destuction callback for cleanups.
+	case '1': // Level1 (hat) 애니메이션 on/off  [요구 3]
+		anim_L1_on = !anim_L1_on;
+		printf("Level 1 (hat) animation: %s\n", anim_L1_on ? "ON" : "OFF");
 		break;
+	case '4': // Level4 (cake) 애니메이션 on/off  [요구 4 - 추가된 레벨]
+		anim_L4_on = !anim_L4_on;
+		printf("Level 4 (cake) animation: %s\n", anim_L4_on ? "ON" : "OFF");
+		break;
+	case '5': // Level5 (fish) 애니메이션 on/off  [추가 구현]
+		anim_L5_on = !anim_L5_on;
+		printf("Level 5 (fish) animation: %s\n", anim_L5_on ? "ON" : "OFF");
+		break;
+	case 27: // ESC
+		glutLeaveMainLoop();
+		break;
+	}
+}
+
+// GLUT y축은 위아래 반전이므로 OpenGL 좌표로 변환해줘야 함
+void myMouse(int button, int state, int x, int y) {
+	if (button == GLUT_LEFT_BUTTON) {
+		if (state == GLUT_DOWN) {
+			is_dragging = 1;
+			L0_x = (float)x - win_width * 0.5f;
+			L0_y = -(float)y + win_height * 0.5f;
+			glutPostRedisplay();
+		}
+		else {
+			is_dragging = 0;
+		}
+	}
+}
+
+void myMotion(int x, int y) {
+	if (is_dragging) {
+		L0_x = (float)x - win_width * 0.5f;
+		L0_y = -(float)y + win_height * 0.5f;
+		glutPostRedisplay();
 	}
 }
 
@@ -932,7 +666,6 @@ void reshape(int width, int height) {
 	ViewProjectionMatrix = ProjectionMatrix * ViewMatrix;
 
 	update_axes();
-	update_line();
 
 	glutPostRedisplay();
 }
@@ -941,19 +674,32 @@ void cleanup(void) {
 	glDeleteVertexArrays(1, &VAO_axes);
 	glDeleteBuffers(1, &VBO_axes);
 
-	glDeleteVertexArrays(1, &VAO_line);
-	glDeleteBuffers(1, &VBO_line);
-
 	glDeleteVertexArrays(1, &VAO_airplane);
 	glDeleteBuffers(1, &VBO_airplane);
 
-	// Delete others here too!!!
+	glDeleteVertexArrays(1, &VAO_hat);
+	glDeleteBuffers(1, &VBO_hat);
+
+	glDeleteVertexArrays(1, &VAO_cocktail);
+	glDeleteBuffers(1, &VBO_cocktail);
+
+	glDeleteVertexArrays(1, &VAO_cake);
+	glDeleteBuffers(1, &VBO_cake);
+
+	glDeleteVertexArrays(1, &VAO_star);
+	glDeleteBuffers(1, &VBO_star);
+
+	glDeleteVertexArrays(1, &VAO_fish);
+	glDeleteBuffers(1, &VBO_fish);
 }
 
 void register_callbacks(void) {
 	glutDisplayFunc(display);
 	glutKeyboardFunc(keyboard);
 	glutReshapeFunc(reshape);
+	glutMouseFunc(myMouse);
+	glutMotionFunc(myMotion);
+	glutTimerFunc(16, myTimer, 0);
 	glutCloseFunc(cleanup);
 }
 
@@ -975,22 +721,18 @@ void initialize_OpenGL(void) {
 	glEnable(GL_MULTISAMPLE);
 	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
-	glClearColor(250 / 255.0f, 128 / 255.0f, 114 / 255.0f, 1.0f);
+	glClearColor(0.08f, 0.12f, 0.22f, 1.0f);  // 어두운 남색 배경
 	ViewMatrix = glm::mat4(1.0f);
 }
 
 void prepare_scene(void) {
 	prepare_axes();
-	prepare_line();
 	prepare_airplane();
-	prepare_shirt();
-	prepare_house();
-	prepare_car();
-	prepare_cocktail();
-	prepare_car2();
 	prepare_hat();
+	prepare_cocktail();
 	prepare_cake();
-	prepare_sword();
+	prepare_star();
+	prepare_fish();
 }
 
 void initialize_renderer(void) {
@@ -1017,7 +759,7 @@ void initialize_glew(void) {
 	fprintf(stdout, "*********************************************************\n\n");
 }
 
-void greetings(char *program_name, char messages[][256], int n_message_lines) {
+void greetings(char* program_name, char messages[][256], int n_message_lines) {
 	fprintf(stdout, "**************************************************************\n\n");
 	fprintf(stdout, "  PROGRAM NAME: %s\n\n", program_name);
 	fprintf(stdout, "    This program was coded for CSE4170 students\n");
@@ -1030,16 +772,18 @@ void greetings(char *program_name, char messages[][256], int n_message_lines) {
 	initialize_glew();
 }
 
-#define N_MESSAGE_LINES 1
-void main(int argc, char *argv[]) {
-	char program_name[64] = "Sogang CSE4170 2DObjects_GLSL_3.0.1.3";
+#define N_MESSAGE_LINES 3
+void main(int argc, char* argv[]) {
+	char program_name[64] = "Sogang CSE4170 HW2 - 2D Hierarchical Modeling";
 	char messages[N_MESSAGE_LINES][256] = {
-		"    - Keys used: 'ESC' "
+		"    - Keys: '1' Level1(hat) ON/OFF  |  '4' Level4(cake) ON/OFF  |  '5' Level5(fish) ON/OFF  |  ESC",
+		"    - Mouse: left-click / drag to move Level0 (airplane)",
+		"    - Hierarchy: airplane(L0) > hat(L1) > star(L2) > cocktail(L3) > cake(L4,req4) > fish(L5)"
 	};
 
 	glutInit(&argc, argv);
-	glutInitDisplayMode(GLUT_RGBA | GLUT_MULTISAMPLE);
-	glutInitWindowSize(1200, 300);
+	glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_MULTISAMPLE);  // DOUBLE 추가 (애니메이션)
+	glutInitWindowSize(1200, 800);
 	glutInitContextVersion(3, 3);
 	glutInitContextProfile(GLUT_CORE_PROFILE);
 	glutCreateWindow(program_name);
@@ -1050,5 +794,3 @@ void main(int argc, char *argv[]) {
 	glutSetOption(GLUT_ACTION_ON_WINDOW_CLOSE, GLUT_ACTION_GLUTMAINLOOP_RETURNS);
 	glutMainLoop();
 }
-
-
